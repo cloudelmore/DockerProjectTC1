@@ -1,1 +1,8 @@
 node_modules/
+build/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.pem
+.env
