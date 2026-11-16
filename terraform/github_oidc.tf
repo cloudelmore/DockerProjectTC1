@@ -8,6 +8,12 @@ variable "github_repo" {
   default     = "cloudelmore/DockerProjectTC1"
 }
 
+variable "github_repo_with_ids" {
+  description = "Repository with GitHub's numeric owner and repo IDs, as it appears in the OIDC subject"
+  type        = string
+  default     = "cloudelmore@312297302/DockerProjectTC1@1459102589"
+}
+
 variable "github_branch" {
   description = "Only workflows running on this branch can assume the role"
   type        = string
@@ -48,7 +54,13 @@ resource "aws_iam_role" "github_actions" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}"
+          # GitHub may send the subject in either format, so accept both:
+          #   classic: repo:owner/repo:ref:refs/heads/branch
+          #   with IDs: repo:owner@ownerId/repo@repoId:ref:refs/heads/branch
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repo}:ref:refs/heads/${var.github_branch}",
+            "repo:${var.github_repo_with_ids}:ref:refs/heads/${var.github_branch}"
+          ]
         }
       }
     }]
