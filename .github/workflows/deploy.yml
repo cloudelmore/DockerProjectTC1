@@ -1,0 +1,70 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches:
+      - gitops
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # needed to request the OIDC token for AWS
+
+concurrency:
+  group: deploy-ecs
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ROLE_ARN: arn:aws:iam::035074950748:role/tc1-github-actions-role
+  CLUSTER: tc1-cluster
+  FRONTEND_SERVICE: tc1-frontend-service
+  BACKEND_SERVICE: tc1-backend-service
+  FRONTEND_REPO_NAME: tc1-frontend
+  BACKEND_REPO_NAME: tc1-backend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: gitops-${{ github.run_number }}
+        run: |
+          docker build -t $REGISTRY/$BACKEND_REPO_NAME:$TAG -t $REGISTRY/$BACKEND_REPO_NAME:latest ./backend
+          docker push $REGISTRY/$BACKEND_REPO_NAME:$TAG
+          docker push $REGISTRY/$BACKEND_REPO_NAME:latest
+
+      - name: Build and push frontend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: gitops-${{ github.run_number }}
+        run: |
+          docker build --build-arg REACT_APP_API_URL=/api/ \
+            -t $REGISTRY/$FRONTEND_REPO_NAME:$TAG -t $REGISTRY/$FRONTEND_REPO_NAME:latest ./frontend
+          docker push $REGISTRY/$FRONTEND_REPO_NAME:$TAG
+          docker push $REGISTRY/$FRONTEND_REPO_NAME:latest
+
+      - name: Deploy to ECS
+        run: |
+          aws ecs update-service --cluster $CLUSTER --service $BACKEND_SERVICE --force-new-deployment --query "service.serviceName" --output text
+          aws ecs update-service --cluster $CLUSTER --service $FRONTEND_SERVICE --force-new-deployment --query "service.serviceName" --output text
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable --cluster $CLUSTER --services $BACKEND_SERVICE $FRONTEND_SERVICE
